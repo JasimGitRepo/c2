@@ -134,6 +134,16 @@ class CoreViewModel(application: Application) : AndroidViewModel(application) {
                         val wrapper = JSONObject(log.substringAfter("RECV: "))
                         val cmdStr = wrapper.optString("cmd")
                         
+                        if (wrapper.has("status")) {
+                            val status = wrapper.optString("status")
+                            if (status == "webrtc_stopped") {
+                                activeVideo = null
+                                activeAudio = null
+                            } else if (status == "requesting_screen_consent") {
+                                ServerCore.log("Waiting for user consent on target...", true)
+                            }
+                        }
+
                         if (cmdStr == "telemetry") {
                             val argStr = wrapper.optString("arg")
                             val arg = JSONObject(argStr)
@@ -150,23 +160,23 @@ class CoreViewModel(application: Application) : AndroidViewModel(application) {
                             val type = ackPayload.optString("type")
                             val mode = ackPayload.optString("mode")
 
+                            // FIX: Eradicated Client-side direction overrides to prevent WebRTC Offer Glare Deadlock.
+                            // The Client will inherently adapt its transceiver direction based on the incoming Server Offer.
                             if (type == "audio_ready") {
                                 if (mode == "call" || mode == "broadcast") {
                                     webRtcManager.enableLocalAudio()
                                 } else {
                                     webRtcManager.disableLocalAudio()
                                 }
-                                
-                                val dir = when (mode) {
-                                    "call" -> RtpTransceiver.RtpTransceiverDirection.SEND_RECV
-                                    "broadcast" -> RtpTransceiver.RtpTransceiverDirection.SEND_ONLY
-                                    "receive" -> RtpTransceiver.RtpTransceiverDirection.RECV_ONLY
-                                    else -> RtpTransceiver.RtpTransceiverDirection.INACTIVE
-                                }
-                                webRtcManager.setAudioDirection(dir)
                                 webRtcManager.setRemoteAudioEnabled(mode == "call" || mode == "receive")
-                            } else if (type == "video_ready") {
-                                webRtcManager.setVideoDirection(RtpTransceiver.RtpTransceiverDirection.RECV_ONLY)
+                            }
+                        } else if (cmdStr == "rtc_error") {
+                            val errMsg = wrapper.optString("arg")
+                            ServerCore.log("RTC Error: $errMsg", false)
+                            // Cleanly unlock the button states if the server failed
+                            if (activeVideo == "screen" || errMsg.contains("Screen", ignoreCase = true)) {
+                                activeVideo = null
+                                webRtcManager.setVideoDirection(RtpTransceiver.RtpTransceiverDirection.INACTIVE)
                             }
                         }
                     } catch (e: Exception) {}
