@@ -139,12 +139,13 @@ class CoreViewModel(application: Application) : AndroidViewModel(application) {
                             val arg = JSONObject(argStr)
                             val mic = arg.optBoolean("mic")
                             val vid = arg.optString("vid")
-                            if (!mic && (activeAudio == "call" || activeAudio == "receive" || activeAudio == "broadcast")) {
-                                activeAudio = null
-                            }
-                            if (vid != activeVideo && activeVideo != null) {
-                                activeVideo = if (vid == "none") null else vid
-                            }
+                            
+                            // CRITICAL ARCHITECTURAL FIX: 
+                            // We completely remove the destructive UI state mutations from raw telemetry.
+                            // The UI MUST remain anchored to the User's Intent and the WebRTC state engine,
+                            // not raw hardware heartbeats which cause async race conditions (like ScreenCast dialogs).
+                            ServerCore.log("Heartbeat -> Mic: ${if(mic) "ON" else "OFF"} | Vid: $vid", null)
+                            
                         } else if (cmdStr == "webrtc_signaling") {
                             val payload = JSONObject(wrapper.getString("arg"))
                             webRtcManager.handleSignalingMessage(payload)
