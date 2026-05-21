@@ -90,7 +90,13 @@ class WebRtcManager(
     fun enableLocalAudio() {
         enqueueAction {
             if (localAudioSource == null) {
-                localAudioSource = peerConnectionFactory?.createAudioSource(MediaConstraints())
+                // CRITICAL FIX: Add MediaConstraints to force Software AEC on Server side too
+                val constraints = MediaConstraints().apply {
+                    mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
+                    mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
+                    mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
+                }
+                localAudioSource = peerConnectionFactory?.createAudioSource(constraints)
                 localAudioTrack = peerConnectionFactory?.createAudioTrack("SERVER_AUDIO_TRACK", localAudioSource)
             }
             localAudioTrack?.setEnabled(true)
