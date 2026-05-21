@@ -1,6 +1,7 @@
 package com.c2c.ui.screens
 
 import android.content.Context
+import android.util.Log
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -613,8 +614,6 @@ fun LiveWebRtcHub(viewModel: CoreViewModel, eglContext: EglBase.Context) {
 
         Box(modifier = Modifier.weight(1f).fillMaxWidth().background(Color.Black).clip(RoundedCornerShape(8.dp))) {
             if (viewModel.remoteVideoTrack != null) {
-                // CRITICAL FIX: The UI thread now safely isolates the track from recomposition loops.
-                // This guarantees addSink() and removeSink() are only called exactly when needed, preventing IllegalStateExceptions.
                 var attachedTrack by remember { mutableStateOf<VideoTrack?>(null) }
                 
                 AndroidView(
@@ -623,12 +622,16 @@ fun LiveWebRtcHub(viewModel: CoreViewModel, eglContext: EglBase.Context) {
                             init(eglContext, null)
                             setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
                             setEnableHardwareScaler(true)
+                            setZOrderMediaOverlay(true)
                         }
                     },
                     update = { view -> 
                         if (attachedTrack != viewModel.remoteVideoTrack) {
-                            try { attachedTrack?.removeSink(view) } catch (e: Exception) {}
-                            try { viewModel.remoteVideoTrack?.addSink(view) } catch (e: Exception) {}
+                            try { attachedTrack?.removeSink(view) } catch (e: Exception) { Log.e("ERROR_TO_DEBUG", "Remove sink error", e) }
+                            try { 
+                                viewModel.remoteVideoTrack?.addSink(view) 
+                                Log.e("ERROR_TO_DEBUG", "Sink attached to VideoTrack Successfully")
+                            } catch (e: Exception) { Log.e("ERROR_TO_DEBUG", "Add sink error", e) }
                             attachedTrack = viewModel.remoteVideoTrack
                         }
                     },
