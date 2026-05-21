@@ -134,7 +134,18 @@ class CoreViewModel(application: Application) : AndroidViewModel(application) {
                         val wrapper = JSONObject(log.substringAfter("RECV: "))
                         val cmdStr = wrapper.optString("cmd")
                         
-                        if (cmdStr == "webrtc_signaling") {
+                        if (cmdStr == "telemetry") {
+                            val argStr = wrapper.optString("arg")
+                            val arg = JSONObject(argStr)
+                            val mic = arg.optBoolean("mic")
+                            val vid = arg.optString("vid")
+                            if (!mic && (activeAudio == "call" || activeAudio == "receive" || activeAudio == "broadcast")) {
+                                activeAudio = null
+                            }
+                            if (vid != activeVideo && activeVideo != null) {
+                                activeVideo = if (vid == "none") null else vid
+                            }
+                        } else if (cmdStr == "webrtc_signaling") {
                             val payload = JSONObject(wrapper.getString("arg"))
                             webRtcManager.handleSignalingMessage(payload)
                         } else if (cmdStr == "rtc_ack") {
