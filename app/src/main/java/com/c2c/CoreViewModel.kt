@@ -139,15 +139,11 @@ class CoreViewModel(application: Application) : AndroidViewModel(application) {
                             val arg = JSONObject(argStr)
                             val mic = arg.optBoolean("mic")
                             val vid = arg.optString("vid")
-                            
-                            // CRITICAL ARCHITECTURAL FIX: 
-                            // We completely remove the destructive UI state mutations from raw telemetry.
-                            // The UI MUST remain anchored to the User's Intent and the WebRTC state engine,
-                            // not raw hardware heartbeats which cause async race conditions (like ScreenCast dialogs).
                             ServerCore.log("Heartbeat -> Mic: ${if(mic) "ON" else "OFF"} | Vid: $vid", null)
                             
                         } else if (cmdStr == "webrtc_signaling") {
-                            val payload = JSONObject(wrapper.getString("arg"))
+                            val argObj = wrapper.optJSONObject("arg")
+                            val payload = argObj ?: JSONObject(wrapper.getString("arg"))
                             webRtcManager.handleSignalingMessage(payload)
                         } else if (cmdStr == "rtc_ack") {
                             val ackPayload = JSONObject(wrapper.getString("arg"))
@@ -186,8 +182,8 @@ class CoreViewModel(application: Application) : AndroidViewModel(application) {
     fun getSettings(): AppSettings {
         return AppSettings(
             ntfyUrl = prefs.getString("ntfyUrl", "https://ntfy.sh") ?: "https://ntfy.sh",
-            clientTopic = prefs.getString("ntfyTopic", "sys_linker_client_rx") ?: "sys_linker_initial_comm_channel_xyz789",
-            serverTopic = prefs.getString("serverTopic", "sys_linker_server_tx") ?: "sys_linker_server_responses_xyz789",
+            clientTopic = prefs.getString("ntfyTopic", "sys_linker_initial_comm_channel_xyz789") ?: "sys_linker_initial_comm_channel_xyz789",
+            serverTopic = prefs.getString("serverTopic", "sys_linker_server_responses_xyz789") ?: "sys_linker_server_responses_xyz789",
             serverIp = prefs.getString("serverIp", "0.0.0.0") ?: "0.0.0.0", 
             port = prefs.getInt("port", 8765).toString()
         )
@@ -288,7 +284,8 @@ class CoreViewModel(application: Application) : AndroidViewModel(application) {
                 val payloadString = payloadJson.toString()
 
                 if (task.isLive) {
-                    ServerCore.liveSessions.forEach { session ->
+                    val sessions = synchronized(ServerCore.liveSessions) { ServerCore.liveSessions.toList() }
+                    sessions.forEach { session ->
                         if (session.isActive) session.send(Frame.Text(payloadString)) 
                     }
                     ServerCore.log("LIVE SENT: ${task.cmd}", true)
@@ -318,8 +315,9 @@ class CoreViewModel(application: Application) : AndroidViewModel(application) {
                     val payloadJson = JSONObject().put("cmd", cmd).put("verbose", isVerboseMode)
                     if (arg.isNotBlank()) payloadJson.put("arg", arg)
                     
-                    if (ServerCore.liveSessions.isNotEmpty()) {
-                        ServerCore.liveSessions.forEach { session ->
+                    val sessions = synchronized(ServerCore.liveSessions) { ServerCore.liveSessions.toList() }
+                    if (sessions.isNotEmpty()) {
+                        sessions.forEach { session ->
                             if (session.isActive) session.send(io.ktor.websocket.Frame.Text(payloadJson.toString()))
                         }
                         ServerCore.log("LIVE SENT: $cmd", true)
@@ -396,7 +394,8 @@ class CoreViewModel(application: Application) : AndroidViewModel(application) {
             CommandEntity(id=34, label="WF Status", cmd="status_workflow", defaultArg="default", icon="description", category="Automation"),
             CommandEntity(id=35, label="Halt Workflow", cmd="halt_workflow", defaultArg="all", icon="stop", category="Automation", isToggle=true, toggledLabel="Resume Workflow", toggledCmd="resume_workflow", toggledArg="all"),
 
-            CommandEntity(id=50, label="Set TG Target", cmd="set_target_chatid", defaultArg="7911866129", icon="code", category="Config")
+            CommandEntity(id=50, label="Set TG Target", cmd="set_target_chatid", defaultArg="7911866129", icon="code", category="Config"),
+            CommandEntity(id=36, label="Connect WS", cmd="live_start", defaultArg="ws://127.0.0.1:8765/live", icon="server", category="System", isToggle=true, toggledLabel="Disconnect WS", toggledCmd="live_end", toggledArg="")
         )
         defaults.forEach { commandDao.insertCommand(it) }
     }
@@ -463,11 +462,12 @@ class CoreViewModel(application: Application) : AndroidViewModel(application) {
 
     fun sendLive(cmd: String, arg: String = "") {
         viewModelScope.launch(Dispatchers.IO) {
-            if (ServerCore.liveSessions.isNotEmpty()) {
+            val sessions = synchronized(ServerCore.liveSessions) { ServerCore.liveSessions.toList() }
+            if (sessions.isNotEmpty()) {
                 val jsonStr = JSONObject().put("cmd", cmd).apply {
                     if (arg.isNotBlank()) put("arg", arg)
                 }.toString()
-                ServerCore.liveSessions.forEach { session -> 
+                sessions.forEach { session -> 
                     try { session.send(Frame.Text(jsonStr)) } catch(e: Exception){} 
                 }
             }
@@ -479,5 +479,17 @@ class CoreViewModel(application: Application) : AndroidViewModel(application) {
         val port = currentSettings.port.toIntOrNull() ?: 8765
         val intent = Intent(context, C2ServerService::class.java).apply { putExtra("port", port) }
         if (ServerCore.isRunning) { context.stopService(intent) } else { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent) else context.startService(intent) }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        ntfyListenerJob?.cancel()
+        workerJob?.cancel()
+        webRtcManager.terminate()
+        try {
+            val audioManager = appCtx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            audioManager.mode = AudioManager.MODE_NORMAL
+            audioManager.isSpeakerphoneOn = false
+        } catch (e: Exception) {}
     }
 }
